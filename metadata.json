@@ -1,0 +1,7 @@
+{
+  "name": "Verida: Botanical Intelligence",
+  "description": "Advanced AI-powered horticultural assistant capable of identifying distinct flora via computer vision and providing deep-learning-backed care protocols and real-time botanical consultation.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
