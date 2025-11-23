@@ -10,6 +10,7 @@ const MOCK_PLANT_DATA = {
   visualConfidenceScore: 0.98,
   careRequirements: {
     hydrationFrequencyDescription: "Every 7 days when soil is dry",
+    hydrationIntervalDays: 7,
     photonicFluxRequirements: "MEDIUM",
     soilPhBalanceIdeal: 6.0,
     atmosphericHumidityPercent: 60,
@@ -23,8 +24,10 @@ const MOCK_PLANT_DATA = {
 
 // 2. Initialize API (Safe Mode)
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
+console.log("🔑 Gemini API Key status:", apiKey ? "✅ Loaded" : "❌ Missing");
+
 const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
 
 const fileToGenerativePart = (base64String: string, mimeType = "image/jpeg") => {
   return {
@@ -54,7 +57,8 @@ export const executeBotanicalIdentification = async (base64Image: string): Promi
         "visualConfidenceScore": number,
         "careRequirements": {
           "hydrationFrequencyDescription": "string",
-          "photonicFluxRequirements": "MEDIUM",
+          "hydrationIntervalDays": number,
+          "photonicFluxRequirements": "LOW" | "MEDIUM" | "HIGH" | "DIRECT",
           "soilPhBalanceIdeal": number,
           "atmosphericHumidityPercent": number,
           "minTempCelsius": number,
@@ -108,21 +112,96 @@ export const executePestDiagnosis = async (base64Image: string, context?: string
   if (!apiKey) return MOCK_PEST_DATA;
 
   try {
-    // ... (Keep your existing prompt logic here if you want, or just return mock) ...
-    // For now, let's just return mock to ensure stability
-    return MOCK_PEST_DATA;
+    const prompt = `
+      Analyze this plant image for pests, diseases, and deficiencies. Return valid JSON:
+      {
+        "diagnosisName": "string (e.g., 'Aphid Infestation' or 'Nitrogen Deficiency')",
+        "confidenceScore": number (0-1),
+        "symptoms": ["string array of visible symptoms"],
+        "treatments": {
+          "organic": [
+            {
+              "name": "string",
+              "instructions": "string",
+              "dosage": "string",
+              "safety": "string",
+              "sideEffects": "string"
+            }
+          ],
+          "chemical": [
+            {
+              "name": "string",
+              "instructions": "string",
+              "dosage": "string",
+              "safety": "string",
+              "sideEffects": "string"
+            }
+          ]
+        },
+        "treatmentComparison": {
+          "organicSpeed": number (1-10),
+          "organicEffectiveness": number (1-10),
+          "chemicalSpeed": number (1-10),
+          "chemicalEffectiveness": number (1-10),
+          "description": "string explaining tradeoffs"
+        },
+        "prevention": "string with prevention tips",
+        "rawAnalysis": "string with detailed analysis"
+      }
+      ${context ? `Additional context: ${context}` : ''}
+    `;
+
+    const imagePart = fileToGenerativePart(base64Image);
+    const result = await model.generateContent([prompt, imagePart]);
+    const response = await result.response;
+    const text = response.text();
+
+    // Clean & Parse
+    const jsonString = text.replace(/```json|```/g, "").trim();
+    const data = JSON.parse(jsonString);
+
+    console.log("✅ Pest Diagnosis Success:", data);
+    return {
+      id: crypto.randomUUID(),
+      ...data
+    };
+
   } catch (error) {
+    console.error("❌ Pest Diagnosis Failed. Switching to Fallback Mode.", error);
     return MOCK_PEST_DATA;
   }
 };
 
 export const initiateBotanicalConsultation = async (history: any[], msg: string): Promise<string> => {
   if (!apiKey) return "I am in Offline Mode. Please check your API Key.";
-  try {
-    const chat = model.startChat({ history });
-    const result = await chat.sendMessage(msg);
-    return result.response.text();
-  } catch (e) {
-    return "Connection lost. I cannot reply right now.";
+
+  const MAX_RETRIES = 3;
+  let attempt = 0;
+
+  while (attempt < MAX_RETRIES) {
+    try {
+      const chat = model.startChat({ history });
+      const result = await chat.sendMessage(msg);
+      return result.response.text();
+    } catch (e: any) {
+      console.error(`❌ Chat Error (Attempt ${attempt + 1}/${MAX_RETRIES}):`, e);
+
+      // Check if it's a 503 Service Unavailable (Overloaded)
+      if (e.message?.includes('503') || e.message?.includes('Overloaded')) {
+        attempt++;
+        if (attempt < MAX_RETRIES) {
+          // Exponential backoff: 1s, 2s, 4s
+          const delay = Math.pow(2, attempt) * 1000;
+          console.log(`⏳ Model overloaded. Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+      }
+
+      // If not 503 or retries exhausted, return error
+      return "The botanical neural network is currently overloaded (503). Please try again in a moment.";
+    }
   }
+
+  return "Connection lost. I cannot reply right now.";
 };

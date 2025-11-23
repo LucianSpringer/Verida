@@ -1,6 +1,6 @@
 
-import React, { useState, useRef, ChangeEvent } from 'react';
-import { Camera, Upload, Sprout, Leaf, Droplets, Sun, AlertTriangle, MessageCircle, ScanLine, Home, Activity, Stethoscope, PlusCircle, CheckCircle, RefreshCw, ArrowLeft, User, Trophy, History, Clock } from 'lucide-react';
+import React, { useState, useRef, ChangeEvent, useEffect } from 'react';
+import { Camera, Upload, Sprout, Leaf, Droplets, Sun, AlertTriangle, MessageCircle, ScanLine, Home, Activity, Stethoscope, PlusCircle, CheckCircle, RefreshCw, ArrowLeft, User, Trophy, History, Clock, X, Trash2 } from 'lucide-react';
 import { AnalysisResultCard } from './components/AnalysisResultCard';
 import { WeatherWidget, HealCropCard, SourceSelector } from './components/HomeWidgets';
 import { EntityLifecycleState, PlantAnalysisArtifact, SavedPlant, UserProfile } from './types';
@@ -14,9 +14,11 @@ import { ChatModule } from './components/ChatModule';
 import { GardenJournal } from './components/GardenJournal';
 import { PestDiagnoser } from './components/PestDiagnoser';
 import { UserProfileModal } from './components/UserProfileModal';
-import { CommunityFeed } from './components/CommunityFeed'; // Import
+import { CommunityFeed } from './components/CommunityFeed';
+import { fetchUserProfile } from './services/profileService';
+import { fetchSavedPlants, savePlantToGarden, deletePlantFromGarden, fetchScanHistory, recordScanHistory, deleteScanHistory } from './services/gardenService';
 
-type ActiveView = 'IDENTIFY' | 'GARDEN' | 'DOCTOR' | 'HISTORY' | 'COMMUNITY'; // Add Type
+type ActiveView = 'IDENTIFY' | 'GARDEN' | 'DOCTOR' | 'HISTORY' | 'COMMUNITY';
 
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<ActiveView>('IDENTIFY');
@@ -40,6 +42,8 @@ const App: React.FC = () => {
     showcasePlantId: null
   });
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   // --- NEW: WEATHER STATE LIFTED ---
   // This data persists even if you switch tabs!
@@ -48,6 +52,39 @@ const App: React.FC = () => {
   const [weatherError, setWeatherError] = useState<string | null>(null);
   const [locationName, setLocationName] = useState("Local weather unavailable");
   const [localPlants, setLocalPlants] = useState<RecommendedPlant[]>([]);
+
+  // Load user profile from Supabase on mount
+  useEffect(() => {
+    const loadProfile = async () => {
+      const CURRENT_USER_ID = "Researcher_Demo_ID"; // Same ID used everywhere
+      const profile = await fetchUserProfile(CURRENT_USER_ID);
+
+      if (profile) {
+        setUserProfile({
+          name: profile.display_name,
+          country: profile.location || '',
+          bio: profile.bio || '',
+          avatarUrl: profile.avatar_url || null,
+          showcasePlantId: null // You can extend this later
+        });
+      }
+    };
+
+    loadProfile();
+  }, []);
+
+  // Load Garden and History on mount
+  useEffect(() => {
+    const loadPersistenceData = async () => {
+      const CURRENT_USER_ID = "Researcher_Demo_ID";
+      const plants = await fetchSavedPlants(CURRENT_USER_ID);
+      setSavedPlants(plants);
+
+      const history = await fetchScanHistory(CURRENT_USER_ID);
+      setScanHistory(history);
+    };
+    loadPersistenceData();
+  }, []);
 
   // FIX 1: AUTO WEATHER HANDLER
   const handleAutoWeather = () => {
@@ -173,58 +210,110 @@ const App: React.FC = () => {
   };
 
   // High-Entropy Naming: Ingestion Pipeline
+  const processBotanicalAnalysis = async (base64String: string, fullDataUrl: string) => {
+    try {
+      const rawData = await executeBotanicalIdentification(base64String);
+
+      // Use structured data if available, otherwise fall back to parsing
+      const hydrationHours = rawData.careRequirements.hydrationIntervalDays
+        ? rawData.careRequirements.hydrationIntervalDays * 24
+        : parseHydrationToHours(rawData.careRequirements.hydrationFrequencyDescription);
+
+      const careProtocol = {
+        hydrationFrequencyHours: hydrationHours,
+        photonicFluxRequirements: rawData.careRequirements.photonicFluxRequirements,
+        soilPhBalanceIdeal: rawData.careRequirements.soilPhBalanceIdeal || 7.0,
+        atmosphericHumidityPercent: rawData.careRequirements.atmosphericHumidityPercent || 50,
+        toxicityVector: {
+          canines: rawData.careRequirements.toxicityToPets || false,
+          felines: rawData.careRequirements.toxicityToPets || false,
+          humans: rawData.careRequirements.toxicityToHumans || false,
+        },
+        temperatureRangeCelsius: {
+          min: rawData.careRequirements.minTempCelsius || 15,
+          max: rawData.careRequirements.maxTempCelsius || 25,
+        }
+      };
+
+      const artifact: PlantAnalysisArtifact = {
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        base64Imagery: fullDataUrl,
+        morphology: {
+          commonName: rawData.commonName,
+          scientificTaxonomy: rawData.scientificTaxonomy,
+          familyClassification: rawData.familyClassification,
+          visualConfidenceScore: rawData.visualConfidenceScore || 0.95,
+        },
+        careProtocol: careProtocol,
+        maintenanceComplexityIndex: computeMaintenanceEntropy(careProtocol),
+        rawDescription: rawData.detailedDescription
+      };
+
+      setAnalysisArtifact(artifact);
+      setScanHistory(prev => [artifact, ...prev]);
+      setLifecycleState(EntityLifecycleState.ANALYSIS_COMPLETE);
+
+      // Persist History
+      recordScanHistory(artifact, "Researcher_Demo_ID");
+    } catch (e) {
+      console.error(e);
+      setLifecycleState(EntityLifecycleState.ERROR_STATE);
+    }
+  };
+
   const executeIngestionPipeline = async (biologicalAsset: File) => {
     setLifecycleState(EntityLifecycleState.PROCESSING_NEURAL_REQUEST);
 
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64String = (reader.result as string).split(',')[1];
-
-      try {
-        const rawData = await executeBotanicalIdentification(base64String);
-
-        const hydrationHours = parseHydrationToHours(rawData.careRequirements.hydrationFrequencyDescription);
-
-        const careProtocol = {
-          hydrationFrequencyHours: hydrationHours,
-          photonicFluxRequirements: rawData.careRequirements.photonicFluxRequirements,
-          soilPhBalanceIdeal: rawData.careRequirements.soilPhBalanceIdeal || 7.0,
-          atmosphericHumidityPercent: rawData.careRequirements.atmosphericHumidityPercent || 50,
-          toxicityVector: {
-            canines: rawData.careRequirements.toxicityToPets || false,
-            felines: rawData.careRequirements.toxicityToPets || false,
-            humans: rawData.careRequirements.toxicityToHumans || false,
-          },
-          temperatureRangeCelsius: {
-            min: rawData.careRequirements.minTempCelsius || 15,
-            max: rawData.careRequirements.maxTempCelsius || 25,
-          }
-        };
-
-        const artifact: PlantAnalysisArtifact = {
-          id: crypto.randomUUID(),
-          timestamp: Date.now(),
-          base64Imagery: reader.result as string,
-          morphology: {
-            commonName: rawData.commonName,
-            scientificTaxonomy: rawData.scientificTaxonomy,
-            familyClassification: rawData.familyClassification,
-            visualConfidenceScore: rawData.visualConfidenceScore || 0.95,
-          },
-          careProtocol: careProtocol,
-          maintenanceComplexityIndex: computeMaintenanceEntropy(careProtocol),
-          rawDescription: rawData.detailedDescription
-        };
-
-        setAnalysisArtifact(artifact);
-        setScanHistory(prev => [artifact, ...prev]);
-        setLifecycleState(EntityLifecycleState.ANALYSIS_COMPLETE);
-      } catch (e) {
-        console.error(e);
-        setLifecycleState(EntityLifecycleState.ERROR_STATE);
-      }
+      await processBotanicalAnalysis(base64String, reader.result as string);
     };
     reader.readAsDataURL(biologicalAsset);
+  };
+
+  // Camera Functions
+  const startCamera = async () => {
+    setIsSourceSelectOpen(false);
+    setShowCamera(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error("Error accessing camera:", err);
+      alert("Could not access camera. Please check permissions.");
+      setShowCamera(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setShowCamera(false);
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current) {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(videoRef.current, 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        const base64String = dataUrl.split(',')[1];
+
+        stopCamera();
+        setLifecycleState(EntityLifecycleState.PROCESSING_NEURAL_REQUEST);
+        processBotanicalAnalysis(base64String, dataUrl);
+      }
+    }
   };
 
   // Handler for Optical Data Acquisition (Trigger Event)
@@ -260,18 +349,32 @@ const App: React.FC = () => {
 
     setSavedPlants(prev => [...prev, newPlant]);
 
-    // CRITICAL FIX: 
-    // 1. DO NOT redirect to 'GARDEN'. Keep user here.
-    // 2. DO NOT wipe state (setAnalysisArtifact(null)).
-    // 3. Just let the UI update to show "Saved".
-
-    // Optional: Trigger a small toast notification here if you have one.
+    // Persist to Supabase
+    savePlantToGarden(newPlant, "Researcher_Demo_ID");
   };
 
   const handleScanAgain = () => {
     setLifecycleState(EntityLifecycleState.IDLE);
     setAnalysisArtifact(null);
     setActiveView('IDENTIFY');
+  };
+
+  const handleDeletePlant = async (plantId: string) => {
+    if (confirm('Are you sure you want to remove this plant from your garden?')) {
+      setSavedPlants(prev => prev.filter(p => p.id !== plantId));
+      await deletePlantFromGarden(plantId);
+    }
+  };
+
+  const handleDeleteHistoryItem = async (e: React.MouseEvent, itemId: string) => {
+    e.stopPropagation(); // Prevent opening the item
+    if (confirm('Remove this scan from history?')) {
+      setScanHistory(prev => prev.filter(h => h.id !== itemId));
+      await deleteScanHistory(itemId);
+      if (viewingHistoryItem?.id === itemId) {
+        setViewingHistoryItem(null);
+      }
+    }
   };
 
   const handleUpdatePlant = (updatedPlant: SavedPlant) => {
@@ -283,10 +386,10 @@ const App: React.FC = () => {
   const isDashboardMode = activeView === 'IDENTIFY' && lifecycleState === EntityLifecycleState.IDLE;
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-24">
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-24" >
 
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-6 py-4 flex justify-between items-center shadow-sm">
+      < header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-6 py-4 flex justify-between items-center shadow-sm" >
         <div className="flex items-center gap-2 text-emerald-800 cursor-pointer group" onClick={() => setActiveView('IDENTIFY')}>
           <div className="bg-emerald-600 p-1.5 rounded-lg text-white group-hover:rotate-12 transition-transform">
             <Leaf className="w-5 h-5" />
@@ -295,7 +398,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex bg-slate-100 p-1 rounded-xl overflow-hidden">
+        <div className="flex bg-slate-100 p-1 rounded-xl overflow-hidden" >
           <button
             onClick={() => setActiveView('IDENTIFY')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeView === 'IDENTIFY' ? 'bg-white shadow-sm text-emerald-800' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
@@ -327,7 +430,7 @@ const App: React.FC = () => {
           >
             Doctor
           </button>
-        </div>
+        </div >
 
         <div className="flex items-center gap-3">
           <button
@@ -355,7 +458,7 @@ const App: React.FC = () => {
             <MessageCircle className="w-6 h-6" />
           </button>
         </div>
-      </header>
+      </header >
 
       <main
         className={`mx-auto p-6 transition-all duration-500 ease-in-out ${isDashboardMode ? 'max-w-md' : 'max-w-5xl'
@@ -471,6 +574,7 @@ const App: React.FC = () => {
             plants={savedPlants}
             onUpdatePlant={handleUpdatePlant}
             onScanNew={handleScanAgain}
+            onDeletePlant={handleDeletePlant}
           />
         )}
 
@@ -535,18 +639,24 @@ const App: React.FC = () => {
                       <div
                         key={item.id}
                         onClick={() => setViewingHistoryItem(item)}
-                        className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer flex gap-4 items-center group"
+                        className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer flex gap-4 items-center group relative"
                       >
                         <div className="w-16 h-16 rounded-lg overflow-hidden bg-emerald-100 shrink-0">
                           <img src={item.base64Imagery} className="w-full h-full object-cover" alt="Thumb" />
                         </div>
-                        <div>
+                        <div className="flex-1">
                           <h3 className="font-bold text-slate-900 group-hover:text-emerald-600 transition-colors">{item.morphology.commonName}</h3>
                           <p className="text-xs text-slate-500 italic">{item.morphology.scientificTaxonomy}</p>
                           <span className="text-[10px] text-slate-400 font-mono mt-1 block">
                             {new Date(item.timestamp).toLocaleDateString()}
                           </span>
                         </div>
+                        <button
+                          onClick={(e) => handleDeleteHistoryItem(e, item.id)}
+                          className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -558,7 +668,7 @@ const App: React.FC = () => {
 
         {/* VIEW: COMMUNITY */}
         {activeView === 'COMMUNITY' && (
-          <CommunityFeed />
+          <CommunityFeed userProfile={userProfile} />
         )}
 
       </main>
@@ -566,10 +676,7 @@ const App: React.FC = () => {
       <SourceSelector
         isOpen={isSourceSelectOpen}
         onClose={() => setIsSourceSelectOpen(false)}
-        onCamera={() => {
-          setIsSourceSelectOpen(false);
-          opticalSensorInputRef.current?.click();
-        }}
+        onCamera={startCamera}
         onGallery={() => {
           setIsSourceSelectOpen(false);
           staticFileInputRef.current?.click();
@@ -581,6 +688,36 @@ const App: React.FC = () => {
         onClose={() => setIsChatOpen(false)}
         contextContext={chatContext}
       />
+
+      {/* Camera View Overlay */}
+      {
+        showCamera && (
+          <div className="fixed inset-0 z-[60] bg-black flex flex-col">
+            <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                className="w-full h-full object-cover"
+              />
+              <button
+                onClick={stopCamera}
+                className="absolute top-4 right-4 p-2 bg-black/40 text-white rounded-full backdrop-blur-md"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="h-32 bg-black flex items-center justify-center gap-8 pb-8">
+              <button
+                onClick={capturePhoto}
+                className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center active:scale-95 transition-transform"
+              >
+                <div className="w-16 h-16 rounded-full bg-white" />
+              </button>
+            </div>
+          </div>
+        )
+      }
 
       <UserProfileModal
         isOpen={isProfileModalOpen}
@@ -610,7 +747,7 @@ const App: React.FC = () => {
           border-radius: 20px;
         }
       `}</style>
-    </div>
+    </div >
   );
 };
 

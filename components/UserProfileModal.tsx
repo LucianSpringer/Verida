@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { UserProfile, SavedPlant } from '../types';
-import { X, Camera, MapPin, Trophy, User } from 'lucide-react';
+import { X, Camera, MapPin, Trophy, User, Image as ImageIcon, RotateCcw } from 'lucide-react';
+import { saveUserProfile } from '../services/profileService';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -12,13 +13,31 @@ interface UserProfileModalProps {
 
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onClose, profile, onUpdateProfile, plants }) => {
   const [localProfile, setLocalProfile] = useState(profile);
+  const [showImageOptions, setShowImageOptions] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     setLocalProfile(profile);
   }, [profile, isOpen]);
 
-  const handleSave = () => {
+  // Cleanup camera stream when component unmounts or modal closes
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  const handleSave = async () => {
+    await saveUserProfile({
+      user_id: 'Researcher_Demo_ID',
+      display_name: localProfile.name,
+      bio: localProfile.bio,
+      location: localProfile.country,
+      avatar_url: localProfile.avatarUrl || undefined,
+      garden_showcase: localProfile.showcasePlantId ? [localProfile.showcasePlantId] : []
+    });
     onUpdateProfile(localProfile);
     onClose();
   };
@@ -27,15 +46,58 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
     const reader = new FileReader();
     reader.onloadend = () => {
       setLocalProfile(prev => ({ ...prev, avatarUrl: reader.result as string }));
+      setShowImageOptions(false);
     };
     reader.readAsDataURL(file);
+  };
+
+  const startCamera = async () => {
+    setShowImageOptions(false);
+    setShowCamera(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.error("Error accessing camera:", err);
+      alert("Could not access camera. Please check permissions.");
+      setShowCamera(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setShowCamera(false);
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current) {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        // Flip horizontally for mirror effect if needed, but standard capture is usually fine.
+        // ctx.translate(canvas.width, 0);
+        // ctx.scale(-1, 1);
+        ctx.drawImage(videoRef.current, 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        setLocalProfile(prev => ({ ...prev, avatarUrl: dataUrl }));
+        stopCamera();
+      }
+    }
   };
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] relative">
 
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
@@ -49,7 +111,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
 
           {/* Avatar Section */}
           <div className="flex flex-col items-center gap-4">
-            <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+            <div className="relative group cursor-pointer" onClick={() => setShowImageOptions(true)}>
               <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-white shadow-lg ring-2 ring-emerald-100 bg-emerald-50 flex items-center justify-center">
                 {localProfile.avatarUrl ? (
                   <img src={localProfile.avatarUrl} alt="Profile" className="w-full h-full object-cover" />
@@ -64,6 +126,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
                 <Camera className="w-4 h-4" />
               </div>
             </div>
+
+            {/* Hidden File Input */}
             <input
               type="file"
               ref={fileInputRef}
@@ -71,6 +135,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
               accept="image/*"
               onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
             />
+
             <div className="text-center">
               <p className="text-sm text-slate-400">Tap to update photo</p>
             </div>
@@ -89,7 +154,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
               />
             </div>
 
-            {/* 2. NEW FIELD: Bio / Describe Yourself */}
             <div className="space-y-1">
               <label className="text-xs font-bold uppercase text-slate-400 tracking-wider ml-1">About You</label>
               <textarea
@@ -174,6 +238,78 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
             Save Profile
           </button>
         </div>
+
+        {/* Image Source Modal */}
+        {showImageOptions && (
+          <div className="absolute inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white w-full max-w-sm rounded-2xl p-4 space-y-3 shadow-xl mb-4 sm:mb-0">
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="font-bold text-slate-800">Select Image Source</h3>
+                <button onClick={() => setShowImageOptions(false)} className="p-1 hover:bg-slate-100 rounded-full">
+                  <X className="w-5 h-5 text-slate-500" />
+                </button>
+              </div>
+
+              <button
+                onClick={startCamera}
+                className="w-full flex items-center gap-3 p-4 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors group"
+              >
+                <div className="w-10 h-10 rounded-full bg-emerald-100 group-hover:bg-emerald-200 flex items-center justify-center text-emerald-600">
+                  <Camera className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <p className="font-bold text-slate-800">Take Photo</p>
+                  <p className="text-xs text-slate-500">Use your camera</p>
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowImageOptions(false);
+                  fileInputRef.current?.click();
+                }}
+                className="w-full flex items-center gap-3 p-4 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors group"
+              >
+                <div className="w-10 h-10 rounded-full bg-blue-100 group-hover:bg-blue-200 flex items-center justify-center text-blue-600">
+                  <ImageIcon className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <p className="font-bold text-slate-800">Upload Gallery</p>
+                  <p className="text-xs text-slate-500">Choose from files</p>
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Camera View */}
+        {showCamera && (
+          <div className="absolute inset-0 z-50 bg-black flex flex-col">
+            <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                className="w-full h-full object-cover"
+              />
+              <button
+                onClick={stopCamera}
+                className="absolute top-4 right-4 p-2 bg-black/40 text-white rounded-full backdrop-blur-md"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="h-24 bg-black flex items-center justify-center gap-8 pb-4">
+              <button
+                onClick={capturePhoto}
+                className="w-16 h-16 rounded-full border-4 border-white flex items-center justify-center active:scale-95 transition-transform"
+              >
+                <div className="w-14 h-14 rounded-full bg-white" />
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

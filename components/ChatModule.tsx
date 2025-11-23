@@ -15,8 +15,8 @@ export const ChatModule: React.FC<ChatModuleProps> = ({ isOpen, onClose, context
     {
       id: 'init',
       role: 'model',
-      content: contextContext 
-        ? `I see you're looking at a ${contextContext}. How can I assist with its care?` 
+      content: contextContext
+        ? `I see you're looking at a ${contextContext}. How can I assist with its care?`
         : "Greetings. I am Verida, your botanical intelligence unit. How may I assist your garden today?",
       timestamp: Date.now()
     }
@@ -46,10 +46,13 @@ export const ChatModule: React.FC<ChatModuleProps> = ({ isOpen, onClose, context
 
     try {
       // Transform history for API consumption
-      const apiHistory = conversationHistory.map(node => ({
-        role: node.role,
-        parts: [{ text: node.content }]
-      }));
+      // Filter out the initial greeting as Gemini expects interaction to start with User
+      const apiHistory = conversationHistory
+        .filter(node => node.id !== 'init')
+        .map(node => ({
+          role: node.role,
+          parts: [{ text: node.content }]
+        }));
 
       const responseText = await initiateBotanicalConsultation(apiHistory, userNode.content);
 
@@ -96,30 +99,28 @@ export const ChatModule: React.FC<ChatModuleProps> = ({ isOpen, onClose, context
               key={node.id}
               className={`flex gap-3 ${node.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
             >
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                node.role === 'user' ? 'bg-emerald-600 text-white' : 'bg-white border border-emerald-200 text-emerald-700'
-              }`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${node.role === 'user' ? 'bg-emerald-600 text-white' : 'bg-white border border-emerald-200 text-emerald-700'
+                }`}>
                 {node.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
               </div>
-              <div className={`max-w-[80%] p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                node.role === 'user' 
-                  ? 'bg-emerald-600 text-white rounded-tr-none' 
+              <div className={`max-w-[80%] p-3 rounded-2xl text-sm leading-relaxed shadow-sm ${node.role === 'user'
+                  ? 'bg-emerald-600 text-white rounded-tr-none'
                   : 'bg-white border border-emerald-100 text-emerald-900 rounded-tl-none'
-              }`}>
+                }`}>
                 {node.content}
               </div>
             </div>
           ))}
           {isProcessing && (
             <div className="flex gap-3">
-               <div className="w-8 h-8 rounded-full bg-white border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
-                 <Bot className="w-4 h-4" />
-               </div>
-               <div className="bg-white border border-emerald-100 p-3 rounded-2xl rounded-tl-none shadow-sm flex gap-1 items-center h-10">
-                 <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                 <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                 <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-               </div>
+              <div className="w-8 h-8 rounded-full bg-white border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+                <Bot className="w-4 h-4" />
+              </div>
+              <div className="bg-white border border-emerald-100 p-3 rounded-2xl rounded-tl-none shadow-sm flex gap-1 items-center h-10">
+                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
             </div>
           )}
         </div>
