@@ -14,8 +14,9 @@ import { ChatModule } from './components/ChatModule';
 import { GardenJournal } from './components/GardenJournal';
 import { PestDiagnoser } from './components/PestDiagnoser';
 import { UserProfileModal } from './components/UserProfileModal';
+import { CommunityFeed } from './components/CommunityFeed'; // Import
 
-type ActiveView = 'IDENTIFY' | 'GARDEN' | 'DOCTOR' | 'HISTORY';
+type ActiveView = 'IDENTIFY' | 'GARDEN' | 'DOCTOR' | 'HISTORY' | 'COMMUNITY'; // Add Type
 
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<ActiveView>('IDENTIFY');
@@ -315,6 +316,12 @@ const App: React.FC = () => {
             {savedPlants.length > 0 && <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>}
           </button>
           <button
+            onClick={() => setActiveView('COMMUNITY')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeView === 'COMMUNITY' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+          >
+            Community
+          </button>
+          <button
             onClick={() => setActiveView('DOCTOR')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeView === 'DOCTOR' ? 'bg-white shadow-sm text-amber-700' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
           >
@@ -415,6 +422,28 @@ const App: React.FC = () => {
                 </div>
               </div>
             )}
+
+            {/* --- INSERT THIS NEW BLOCK HERE --- */}
+            {lifecycleState === EntityLifecycleState.ERROR_STATE && (
+              <div className="flex flex-col items-center justify-center py-20 text-center space-y-6 animate-in fade-in">
+                <div className="bg-red-100 p-6 rounded-full">
+                  <AlertTriangle className="w-12 h-12 text-red-600" />
+                </div>
+                <div className="max-w-xs mx-auto space-y-2">
+                  <h2 className="text-xl font-bold text-slate-900">Analysis Failed</h2>
+                  <p className="text-slate-500 text-sm">
+                    We couldn't identify this plant. Please check your internet connection or API Key.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setLifecycleState(EntityLifecycleState.IDLE)}
+                  className="px-6 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-colors shadow-lg"
+                >
+                  Try Again
+                </button>
+              </div>
+            )}
+            {/* ---------------------------------- */}
 
             {/* Results View */}
             {lifecycleState === EntityLifecycleState.ANALYSIS_COMPLETE && analysisArtifact && (
@@ -525,6 +554,11 @@ const App: React.FC = () => {
               </div>
             )}
           </div>
+        )}
+
+        {/* VIEW: COMMUNITY */}
+        {activeView === 'COMMUNITY' && (
+          <CommunityFeed />
         )}
 
       </main>
