@@ -3,10 +3,12 @@ import React, { useState, useRef, ChangeEvent, useEffect } from 'react';
 import { Camera, Upload, Sprout, Leaf, Droplets, Sun, AlertTriangle, MessageCircle, ScanLine, Home, Activity, Stethoscope, PlusCircle, CheckCircle, RefreshCw, ArrowLeft, User, Trophy, History, Clock, X, Trash2 } from 'lucide-react';
 import { AnalysisResultCard } from './components/AnalysisResultCard';
 import { WeatherWidget, HealCropCard, SourceSelector } from './components/HomeWidgets';
+import { SprayingTimeWidget } from './components/SprayingTimeWidget';
 import { EntityLifecycleState, PlantAnalysisArtifact, SavedPlant, UserProfile } from './types';
 import { executeBotanicalIdentification } from './services/geminiService';
 import { fetchLocalWeather, resolveCityToCoords, WeatherData } from './services/weatherService';
-import { getPlantsByGeo, RecommendedPlant } from './services/plantRecommendationService';
+import { getPlantsByGeo, RecommendedPlant, getClimateZoneFromLat } from './services/plantRecommendationService';
+import { fetchRecommendedPlants } from './services/plantService';
 import { LocalPlantsWidget } from './components/LocalPlantsWidget';
 import { computeMaintenanceEntropy, parseHydrationToHours } from './utils/mathUtils';
 import { MetricHexagon } from './components/MetricHexagon';
@@ -15,7 +17,7 @@ import { GardenJournal } from './components/GardenJournal';
 import { PestDiagnoser } from './components/PestDiagnoser';
 import { UserProfileModal } from './components/UserProfileModal';
 import { CommunityFeed } from './components/CommunityFeed';
-import { fetchUserProfile } from './services/profileService';
+import { fetchUserProfile, saveUserProfile } from './services/profileService';
 import { fetchSavedPlants, savePlantToGarden, deletePlantFromGarden, fetchScanHistory, recordScanHistory, deleteScanHistory } from './services/gardenService';
 
 type ActiveView = 'IDENTIFY' | 'GARDEN' | 'DOCTOR' | 'HISTORY' | 'COMMUNITY';
@@ -52,6 +54,8 @@ const App: React.FC = () => {
   const [weatherError, setWeatherError] = useState<string | null>(null);
   const [locationName, setLocationName] = useState("Local weather unavailable");
   const [localPlants, setLocalPlants] = useState<RecommendedPlant[]>([]);
+  const [locationMode, setLocationMode] = useState<"auto" | "manual" | null>(null);
+  const [locationCoords, setLocationCoords] = useState<{ lat: number; lon: number } | null>(null);
 
   // Load user profile from Supabase on mount
   useEffect(() => {
@@ -67,10 +71,24 @@ const App: React.FC = () => {
           avatarUrl: profile.avatar_url || null,
           showcasePlantId: null // You can extend this later
         });
+
+        // Restore weather location preference
+        if (profile.weather_location_mode) {
+          setLocationMode(profile.weather_location_mode);
+          
+          if (profile.weather_location_mode === "auto") {
+            // Automatically trigger auto weather on load
+            handleAutoWeather();
+          } else if (profile.weather_location_mode === "manual" && profile.weather_location_city) {
+            // Restore manual city and fetch weather
+            handleManualWeather(profile.weather_location_city);
+          }
+        }
       }
     };
 
     loadProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load Garden and History on mount
@@ -102,12 +120,35 @@ const App: React.FC = () => {
         try {
           const data = await fetchLocalWeather(pos.coords.latitude, pos.coords.longitude);
           setWeatherData(data);
+          setLocationCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
 
-          // B. Calculate Bioclimatic Plants (NEW)
-          const plants = getPlantsByGeo(pos.coords.latitude);
-          setLocalPlants(plants);
+          // B. Calculate Bioclimatic Plants (NEW) - Try Supabase first, fallback to local
+          try {
+            const climateZone = getClimateZoneFromLat(pos.coords.latitude);
+            const plants = await fetchRecommendedPlants(climateZone);
+            setLocalPlants(plants);
+          } catch (error) {
+            console.error('Error fetching plants, using fallback:', error);
+            const plants = getPlantsByGeo(pos.coords.latitude);
+            setLocalPlants(plants);
+          }
 
           setLocationName("Current Location");
+          setLocationMode("auto");
+
+          // Save preference to Supabase
+          const CURRENT_USER_ID = "Researcher_Demo_ID";
+          const currentProfile = await fetchUserProfile(CURRENT_USER_ID);
+          await saveUserProfile({
+            user_id: CURRENT_USER_ID,
+            display_name: currentProfile?.display_name || "Gardener",
+            bio: currentProfile?.bio,
+            location: currentProfile?.location,
+            avatar_url: currentProfile?.avatar_url,
+            garden_showcase: currentProfile?.garden_showcase,
+            weather_location_mode: "auto",
+            weather_location_city: null
+          });
         } catch (e) {
           setWeatherError("Network error");
         } finally {
@@ -139,13 +180,36 @@ const App: React.FC = () => {
     try {
       const coords = await resolveCityToCoords(city);
       const data = await fetchLocalWeather(coords.lat, coords.lon);
+      setLocationCoords({ lat: coords.lat, lon: coords.lon });
 
-      // C. Calculate Bioclimatic Plants (NEW)
-      const plants = getPlantsByGeo(coords.lat);
-      setLocalPlants(plants);
+      // C. Calculate Bioclimatic Plants (NEW) - Try Supabase first, fallback to local
+      try {
+        const climateZone = getClimateZoneFromLat(coords.lat);
+        const plants = await fetchRecommendedPlants(climateZone);
+        setLocalPlants(plants);
+      } catch (error) {
+        console.error('Error fetching plants, using fallback:', error);
+        const plants = getPlantsByGeo(coords.lat);
+        setLocalPlants(plants);
+      }
 
       setWeatherData(data);
       setLocationName(coords.name);
+      setLocationMode("manual");
+
+      // Save preference to Supabase
+      const CURRENT_USER_ID = "Researcher_Demo_ID";
+      const currentProfile = await fetchUserProfile(CURRENT_USER_ID);
+      await saveUserProfile({
+        user_id: CURRENT_USER_ID,
+        display_name: currentProfile?.display_name || "Gardener",
+        bio: currentProfile?.bio,
+        location: currentProfile?.location,
+        avatar_url: currentProfile?.avatar_url,
+        garden_showcase: currentProfile?.garden_showcase,
+        weather_location_mode: "manual",
+        weather_location_city: coords.name
+      });
     } catch (e) {
       console.error(e);
       setWeatherError("City not found. Try 'Jakarta'.");
@@ -482,6 +546,15 @@ const App: React.FC = () => {
                   onManualLocate={handleManualWeather}
                 />
 
+                {/* Spraying Time Widget */}
+                {locationCoords && (
+                  <SprayingTimeWidget
+                    lat={locationCoords.lat}
+                    lon={locationCoords.lon}
+                    locationName={locationName}
+                  />
+                )}
+
                 {/* 5. Render the Widget (Only if we have plants) */}
                 {localPlants.length > 0 && (
                   <LocalPlantsWidget
@@ -575,6 +648,7 @@ const App: React.FC = () => {
             onUpdatePlant={handleUpdatePlant}
             onScanNew={handleScanAgain}
             onDeletePlant={handleDeletePlant}
+            scanHistory={scanHistory}
           />
         )}
 

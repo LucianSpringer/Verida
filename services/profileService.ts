@@ -8,6 +8,8 @@ export interface UserProfile {
     location?: string;
     avatar_url?: string;
     garden_showcase?: any;
+    weather_location_mode?: "auto" | "manual";
+    weather_location_city?: string;
     created_at?: string;
     updated_at?: string;
 }
@@ -53,6 +55,8 @@ export const saveUserProfile = async (profile: {
     location?: string;
     avatar_url?: string;
     garden_showcase?: any;
+    weather_location_mode?: "auto" | "manual";
+    weather_location_city?: string;
 }): Promise<boolean> => {
     if (!supabase) {
         console.warn('Supabase not initialized');
@@ -73,6 +77,8 @@ export const saveUserProfile = async (profile: {
                     location: profile.location,
                     avatar_url: profile.avatar_url,
                     garden_showcase: profile.garden_showcase,
+                    weather_location_mode: profile.weather_location_mode,
+                    weather_location_city: profile.weather_location_city,
                     updated_at: new Date().toISOString()
                 })
                 .eq('user_id', profile.user_id);
@@ -88,7 +94,9 @@ export const saveUserProfile = async (profile: {
                     bio: profile.bio,
                     location: profile.location,
                     avatar_url: profile.avatar_url,
-                    garden_showcase: profile.garden_showcase
+                    garden_showcase: profile.garden_showcase,
+                    weather_location_mode: profile.weather_location_mode,
+                    weather_location_city: profile.weather_location_city
                 }]);
 
             if (error) throw error;

@@ -78,7 +78,7 @@ const PLANT_DATABASE = {
             care: { hydrationHours: 120, sunlight: 'HIGH', humidity: 50, tempMin: 5, tempMax: 25, isToxic: true }
         },
         {
-            id: 'tp6', name: 'Sunflower', scientific: 'Helianthus', type: 'Flower', image: 'https://images.unsplash.com/photo-1599598425947-520286801936?w=400&q=80',
+            id: 'tp6', name: 'Sunflower', scientific: 'Helianthus', type: 'Flower', image: 'https://images.unsplash.com/photo-1610878180933-123728745d22?w=400&q=80',
             description: "Tall, bright, and cheerful. Sunflowers track the sun across the sky and produce edible seeds.",
             care: { hydrationHours: 48, sunlight: 'DIRECT', humidity: 40, tempMin: 15, tempMax: 30, isToxic: false }
         }
@@ -129,4 +129,12 @@ export const getPlantsByGeo = (lat: number): RecommendedPlant[] => {
     } else {
         return PLANT_DATABASE.COLD as RecommendedPlant[]; // Northern/Southern Hemispheres
     }
+};
+
+// Helper to get climate zone from latitude
+export const getClimateZoneFromLat = (lat: number): 'TROPICAL' | 'TEMPERATE' | 'COLD' => {
+    const absLat = Math.abs(lat);
+    if (absLat < 23.5) return 'TROPICAL';
+    if (absLat < 50) return 'TEMPERATE';
+    return 'COLD';
 };
